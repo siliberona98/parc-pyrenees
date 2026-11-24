@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parc national des Pyrénées</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.16.0/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/pmtiles@4.5.0/dist/pmtiles.js"></script> <!-- Étape 10 -->
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; } /* la carte occupe toute la fenêtre */
+    /* Étape 7 : le panneau des couches et de la légende, en haut à droite */
+    #panneau {
+      position: absolute; top: 10px; right: 10px; max-height: calc(100% - 60px); overflow: auto;
+      background: white; padding: 6px 10px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      font-size: 13px; line-height: 1.7;
+    }
+    #panneau summary { cursor: pointer; font-weight: bold; }
+    #panneau .titre { margin: 6px 0 0; font-weight: bold; }
+    #panneau label { display: block; }
+    #panneau img { vertical-align: middle; }
+    .trait { display: inline-block; width: 18px; vertical-align: middle; } /* symbole d'une surface ou d'une ligne */
+    .rond { /* symbole d'un refuge */
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid #7f2704; vertical-align: middle;
+    }
+    .carre { /* symbole d'une classe de lacs */
+      display: inline-block; width: 10px; height: 10px; border: 1px solid #08306b; vertical-align: middle;
+    }
+    .retrait { margin-left: 22px; }
+  </style>
+</head>
+<body>
+  <!-- Ouvrir par le serveur de TD (python3 serveur.py 5000), jamais d'un double clic : en file://, -->
+  <!-- Chromium refuse de démarrer le worker, et tout navigateur de lire les données -->
+  <div id="map"></div>
+
+  <!-- Étape 7 : le panneau des couches et de la légende ; value = l'identifiant de la couche -->
+  <details id="panneau" open>
+    <summary>Couches et légende</summary>
+    <p class="titre">Fond</p>
+    <label><input type="radio" name="fond" value="plan" checked> Plan IGN</label>
+    <label><input type="radio" name="fond" value="photos"> Photographies aériennes</label>
+    <p class="titre">Parc national</p>
+    <label><input type="checkbox" value="coeur" checked> <span class="trait" style="height: 10px; background: rgba(65, 171, 93, 0.25); border: 1px solid #006d2c;"></span> cœur</label>
+    <label><input type="checkbox" value="aire" checked> <span class="trait" style="border-top: 2px dashed #41ab5d;"></span> aire d'adhésion</label>
+    <label><input type="checkbox" value="secteurs" checked> <span class="trait" style="border-top: 1px solid #525252;"></span> limite de secteur</label>
+    <label><input type="checkbox" value="sentiers" checked> <span class="trait" style="border-top: 2px dashed #a50f15;"></span> sentier</label>
+    <label><input type="checkbox" value="maisons" checked> <img src="icones/maison.png" width="16" height="16" alt=""> maison du parc</label>
+    <label><input type="checkbox" value="lacs" checked> lac, selon son altitude</label>
+    <div class="retrait">
+      <span class="carre" style="background: #bdd7e7;"></span> moins de 2100 m<br>
+      <span class="carre" style="background: #6baed6;"></span> de 2100 à 2249 m<br>
+      <span class="carre" style="background: #3182bd;"></span> de 2250 à 2349 m<br>
+      <span class="carre" style="background: #08519c;"></span> 2350 m et plus
+    </div>
+    <label><input type="checkbox" value="refuges" checked> refuge, selon son type</label>
+    <div class="retrait">
+      <span class="rond" style="background: #d94801;"></span> gardé<br>
+      <span class="rond" style="background: #ffffff;"></span> non gardé<br>
+      <span class="rond" style="background: #fdae6b;"></span> chalet
+    </div>
+    <!-- Étape 8 : la liste qui filtre les refuges -->
+    <label class="retrait">Afficher
+      <select id="filtre-refuges">
+        <option value="tous">tous les refuges</option>
+        <option value="gardé">les refuges gardés</option>
+        <option value="non gardé">les refuges non gardés</option>
+        <option value="chalet">les chalets</option>
+      </select>
+    </label>
+    <p class="titre">Forêts</p>
+    <label><input type="checkbox" value="foret"> BD Forêt v2</label>
+    <a href="https://data.geopf.fr/annexes/ressources/legendes/LANDCOVER.FORESTINVENTORY.V2-legend.png" target="_blank">Légende de la BD Forêt</a>
+        <!-- Étape 12 : l'occupation du sol, avec son opacité, sa légende et sa mention de crédit -->
+    <p class="titre">Occupation du sol</p>
+    <label><input type="checkbox" value="oso"> OSO 2021</label>
+    <label class="retrait">Opacité <input type="range" id="opacite-oso" min="0" max="100" value="70"></label>
+    <div class="retrait">
+      <span class="carre" style="background: #009c00; border-color: #666;"></span> forêts de feuillus<br>
+      <span class="carre" style="background: #003200; border-color: #666;"></span> forêts de conifères<br>
+      <span class="carre" style="background: #55aa7f; border-color: #666;"></span> landes<br>
+      <span class="carre" style="background: #aaff00; border-color: #666;"></span> pelouses<br>
+      <span class="carre" style="background: #aaaa00; border-color: #666;"></span> prairies<br>
+      <span class="carre" style="background: #ff5500; border-color: #666;"></span> cultures, vergers et vignes<br>
+      <span class="carre" style="background: #ff55ff; border-color: #666;"></span> bâti et routes<br>
+      <span class="carre" style="background: #ff0000; border-color: #666;"></span> surfaces minérales<br>
+      <span class="carre" style="background: #bebebe; border-color: #666;"></span> glaciers et neiges éternelles<br>
+      <span class="carre" style="background: #0000ff; border-color: #666;"></span> eau
+    </div>
+    <div class="retrait">OSO 2021 © CESBIO / CNES, Theia, CC BY 4.0</div>
+       
+    <!-- Étape 14 : l'ombrage du relief -->
+    <p class="titre">Relief</p>
+    <label><input type="checkbox" value="ombrage" checked> ombrage</label>
+</details>
+
+  <script type="module">
+    // MapLibre en module, version épinglée : une nouvelle version ne change pas la page
+    import * as maplibregl from "https://unpkg.com/maplibre-gl@6.16.0/dist/maplibre-gl.mjs";
+
+    // Étape 10 : le protocole pmtiles://, enregistré dans MapLibre
+    const protocole = new pmtiles.Protocol(); // pmtiles : la variable créée par le script du <head>
+    maplibregl.addProtocol("pmtiles", protocole.tile); // une adresse pmtiles://... passe par lui
+
+    // Le code de la carte s'écrit ici, étape par étape. Une ligne ajoutée porte « // Étape N »,
+    // une ligne modifiée « // Étape N : modifié ».
+
+    // Étape 1 : la carte, sur le fond Plan IGN, cadrée sur le parc
+    const map = new maplibregl.Map({
+      container: "map", // l'identifiant du <div> qui reçoit la carte
+      style: "https://data.geopf.fr/annexes/ressources/vectorTiles/styles/PLAN.IGN/standard.json", // le style
+      attributionControl: { customAttribution: "Plan IGN © IGN" }, // le style n'en déclare aucune
+    });
+    map.fitBounds([[-0.697, 42.673], [0.367, 43.178]], { animate: false }); // ouest, sud, est, nord
+    map.addControl(new maplibregl.NavigationControl(), "top-left"); // zoom et boussole
+    map.addControl(new maplibregl.ScaleControl(), "bottom-left"); // échelle, en bas à gauche
+    window.map = map; // la carte, accessible depuis la console (étape 2)
+
+    // Étape 2 : deux couches du style modifiées, une fois le style chargé
+    map.on("load", () => { // quand le style et ses ressources sont chargés
+      map.setPaintProperty("hydro surfacique", "fill-color", "#6baed6"); // l'eau, plus soutenue
+      // les forêts fermées, masquées : la BD Forêt les montrera (étape 7) ;
+      // le nom porte la coquille du style, « boiséee »
+      map.setLayoutProperty("ocs - vegetation - zone boiséee, foret fermee, peupleraie", "visibility", "none");
+    });
+
+    // Étape 3 : six couches du parc, lues dans les GeoJSON (les maisons à l'étape 4)
+    const DREAL = "Cœur, aire d'adhésion et secteurs : DREAL Nouvelle-Aquitaine"; // sur trois sources
+    const PNP = "Sentiers, refuges, maisons du parc : Parc national des Pyrénées";
+
+    // Étape 10 : retiré, la fonction lireGeojson : plus aucun GeoJSON à lire
+
+    map.on("load", async () => { // un second abonné ; async : il attend les fichiers
+      // Les couches du parc se glissent sous les écritures du Plan IGN, en haut de la pile
+      const couchesDuStyle = map.getStyle().layers; // de la plus basse à la plus haute
+      let ecritures; // la plus basse de ces écritures
+      for (let i = couchesDuStyle.length - 1; i >= 0; i--) { // du haut de la pile vers le bas
+        if (couchesDuStyle[i].type !== "symbol") break; // pas une écriture : on s'arrête
+        ecritures = couchesDuStyle[i].id;
+      }
+
+      // Étape 10 : une seule source, les sept couches lues par morceaux dans parc.pmtiles
+      map.addSource("parc", {
+        type: "vector", // des tuiles vectorielles
+        url: "pmtiles://donnees/parc.pmtiles", // passe par le protocole du pas 2
+        attribution: DREAL + " ; Lacs : IGN, BD TOPO ; altitude : IGN, RGE ALTI ; " + PNP, // les trois mentions réunies
+      });
+
+      // Étape 10 : retiré, la source GeoJSON du cœur
+      map.addLayer({
+        id: "coeur", // le nom de la couche (ici celui de sa source)
+        type: "fill", // une surface
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "coeur",
+        paint: {
+          "fill-color": "#41ab5d",
+          "fill-opacity": [ // Étape 6 : modifié, l'opacité dépend de l'état de l'entité
+            "case", ["boolean", ["feature-state", "survol"], false], // si l'état survol est posé :
+            0.45, // plus opaque
+            0.25 // sinon, l'aplat transparent de l'étape 3
+          ],
+          "fill-outline-color": "#006d2c",
+        },
+      }, ecritures); // second argument : la couche est insérée sous celle-ci
+
+      // Étape 10 : retiré, la source GeoJSON des secteurs
+      map.addLayer({
+        id: "secteurs",
+        type: "fill", // une surface sans couleur : seul son contour se voit
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "secteurs",
+        paint: {
+          "fill-color": "rgba(0, 0, 0, 0)", // intérieur entièrement transparent
+          "fill-outline-color": "#525252", // contour fin, d'un pixel
+        },
+      }, ecritures);
+
+      // Étape 10 : retiré, la source GeoJSON de l'aire d'adhésion
+      map.addLayer({
+        id: "aire",
+        type: "line", // le contour seul
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "aire",
+        paint: {
+          "line-color": "#41ab5d",
+          "line-width": 2,
+          "line-dasharray": [3, 2], // tiret puis blanc, en largeurs de trait : 6 et 4 pixels
+        },
+      }, ecritures);
+
+      // Étape 10 : retiré, la source GeoJSON des lacs
+      map.addLayer({
+        id: "lacs",
+        type: "fill",
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "lacs", // Étape 10 : la couche du fichier
+        paint: {
+          "fill-color": [ // Étape 4 : modifié, une couleur par classe d'altitude
+            "step", ["get", "altitude_m"], // selon le champ altitude_m, en mètres :
+            "#bdd7e7", // moins de 2100
+            2100, "#6baed6", // de 2100 à 2249
+            2250, "#3182bd", // de 2250 à 2349
+            2350, "#08519c" // 2350 et plus
+          ], // seuils : quartiles des altitudes, arrondis à 50 m (2075 donne 2100)
+          "fill-opacity": [ // Étape 6 : modifié, plus clair sous le pointeur
+            "case", ["boolean", ["feature-state", "survol"], false], 0.6, 0.9
+          ],
+          "fill-outline-color": "#08306b",
+        },
+      }, ecritures);
+
+      // Étape 10 : retiré, la source GeoJSON des sentiers
+      map.addLayer({
+        id: "sentiers",
+        type: "line",
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "sentiers",
+        paint: {
+          "line-color": "#a50f15",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 14, 3], // Étape 4 : modifié, selon le zoom
+          "line-dasharray": [2.5, 2], // tiret puis blanc, en largeurs de trait
+        },
+      }, ecritures); // ajoutée après les aplats : dessinée au-dessus d'eux
+
+      // Étape 10 : retiré, la source GeoJSON des refuges
+      map.addLayer({ // sans second argument : au sommet de la pile, au-dessus des écritures
+        id: "refuges",
+        type: "circle", // un cercle sur chaque point
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "refuges",
+        paint: {
+          "circle-radius": [ // Étape 6 : modifié, en pixels, plus grand sous le pointeur
+            "case", ["boolean", ["feature-state", "survol"], false], 9, 6
+          ],
+          "circle-color": [ // Étape 4 : modifié, une couleur selon le type du refuge
+            "match", ["get", "type"], // selon la valeur du champ type :
+            "gardé", "#d94801",
+            "non gardé", "#ffffff",
+            "chalet", "#fdae6b",
+            "#808080" // couleur de tout autre type (valeur obligatoire)
+          ],
+          "circle-stroke-color": "#7f2704",
+          "circle-stroke-width": 2,
+        },
+      });
+
+      // Étape 4 : les maisons du parc, sous leur pictogramme
+      const pictogramme = await map.loadImage("icones/maison.png"); // attend l'image
+      map.addImage("maison", pictogramme.data, { pixelRatio: 2 }); // 48 pixels affichés sur 24
+      // Étape 10 : retiré, la source GeoJSON des maisons
+      map.addLayer({ // au sommet de la pile, au-dessus des refuges
+        id: "maisons",
+        type: "symbol", // un pictogramme (ou un texte) posé sur chaque point
+        source: "parc", // Étape 10 : modifié
+        "source-layer": "maisons",
+        layout: { // un pictogramme se règle dans layout, pas dans paint
+          "icon-image": "maison", // le nom donné à l'image par addImage
+          "icon-allow-overlap": true, // affiché même s'il chevauche un autre pictogramme
+        },
+      });
+
+      // Étape 5 : le nom du secteur au clic
+      map.on("click", "secteurs", (e) => { // e.features : ses entités sous le pointeur
+        new maplibregl.Popup() // une fenêtre, avec sa croix de fermeture
+          .setLngLat(e.lngLat) // ancrée à l'endroit du clic
+          .setText(e.features[0].properties.nom) // du texte seul, jamais lu comme du HTML
+          .addTo(map);
+      });
+
+      // Étape 6 : info-bulle et mise en évidence au survol
+      // une seule info-bulle, déplacée au fil du survol
+      const infoBulle = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12 });
+      let survolee = null; // l'entité mise en évidence, { source, id }, ou null
+
+      function eteindre() { // éteint l'entité mise en évidence, s'il y en a une
+        if (survolee !== null) {
+          map.setFeatureState(survolee, { survol: false });
+          survolee = null;
+        }
+      }
+
+      map.on("mousemove", (e) => { // à chaque déplacement du pointeur sur la carte
+        eteindre(); // l'entité survolée juste avant
+        const entites = map.queryRenderedFeatures(e.point, { // sous le pointeur, la plus haute d'abord
+          layers: ["maisons", "refuges", "lacs", "coeur"],
+        });
+        if (entites.length === 0) {
+          infoBulle.remove();
+          map.getCanvas().style.cursor = "";
+          return;
+        }
+        const entite = entites[0]; // celle qui est dessinée au-dessus des autres
+        const champs = entite.properties;
+        let texte;
+        if (entite.layer.id === "coeur") {
+          texte = "<b>" + champs.nom + "</b>";
+        } else if (entite.layer.id === "lacs") {
+          let nom = champs.nom;
+          if (nom === undefined) nom = "lac sans nom"; // cinq lacs sans nom dans la BD TOPO
+          texte = "Lac : <b>" + nom + "</b><br>Altitude : " + champs.altitude_m + " m";
+        } else if (entite.layer.id === "refuges") {
+          texte = "Refuge : <b>" + champs.nom + "</b><br>Type : " + champs.type
+            + "<br>Propriétaire : " + champs.proprietaire;
+        } else {
+          texte = "Maison du parc : <b>" + champs.nom + "</b>";
+        }
+        infoBulle.setLngLat(e.lngLat).setHTML(texte).addTo(map); // texte lu comme du HTML
+        map.getCanvas().style.cursor = "pointer"; // la main : l'entité réagit au pointeur
+        survolee = { source: entite.source, sourceLayer: entite.sourceLayer, id: entite.id }; // Étape 10 : modifié, la couche du fichier en plus
+        map.setFeatureState(survolee, { survol: true });
+      });
+      map.on("mouseout", () => { // le pointeur quitte la carte
+        infoBulle.remove();
+        eteindre();
+        map.getCanvas().style.cursor = "";
+      });
+
+      // Étape 7 : photographies aériennes (WMTS) et BD Forêt (WMS), masquées à l'ouverture
+      const adressePhotos = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0" // le WMTS
+        + "&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg"
+        + "&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+      map.addSource("photos", {
+        type: "raster", // des images, en tuiles
+        tiles: [adressePhotos], // MapLibre remplace {z}, {y} et {x} pour chaque tuile
+        tileSize: 256, // les tuiles du WMTS font 256 pixels de côté
+        attribution: "Photographies aériennes © IGN",
+      });
+      // Les photographies se glissent dans la pile du fond, sous le cœur : les écritures du
+      // Plan IGN, plus haut dans la pile, restent lisibles. Avec Folium, chaque fond était une
+      // couche d'images entière, écritures comprises : rien ne pouvait s'y glisser.
+      map.addLayer({
+        id: "photos",
+        type: "raster",
+        source: "photos",
+        layout: { visibility: "none" }, // masquée à l'ouverture
+      }, "coeur"); // insérée sous le cœur
+
+      const adresseForet = "https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0" // le service WMS
+        + "&REQUEST=GetMap&LAYERS=LANDCOVER.FORESTINVENTORY.V2&STYLES=" // la couche (séance 2)
+        + "&FORMAT=image/png&TRANSPARENT=true" // PNG transparent hors des forêts
+        + "&CRS=EPSG:3857&BBOX={bbox-epsg-3857}" // l'emprise de chaque image, en Web Mercator
+        + "&WIDTH=512&HEIGHT=512"; // des images de 512 pixels, quatre fois la surface de 256
+      map.addSource("foret", {
+        type: "raster",
+        tiles: [adresseForet],
+        tileSize: 512, // la même taille que WIDTH et HEIGHT
+        attribution: "BD Forêt v2 © IGN",
+      });
+      map.addLayer({
+        id: "foret",
+        type: "raster",
+        source: "foret",
+        layout: { visibility: "none" }, // masquée à l'ouverture (commande)
+        paint: { "raster-opacity": 0.6 }, // le fond se lit à travers
+      }, "coeur"); // ajoutée après les photographies : dessinée au-dessus d'elles
+
+      map.addSource("oso", {       // Étape 12 : l'occupation du sol OSO 2021 ; Étape 13 : lue en tuiles dans un PMTiles
+        type: "raster", // Étape 13 : modifié, des tuiles d'images au lieu d'une image
+        url: "pmtiles://donnees/oso/oso_parc.pmtiles", // Étape 13 : modifié, la pyramide, lue par morceaux
+        tileSize: 256, // Étape 13 : les tuiles du fichier font 256 pixels de côté
+        attribution: "OSO 2021 © CESBIO / CNES, Theia, CC BY 4.0", // Étape 13 : une source de tuiles l'accepte
+        // Étape 13 : retiré, les quatre coins : chaque tuile a sa place dans la pyramide
+      });
+
+      map.addLayer({
+        id: "oso",
+        type: "raster",
+        source: "oso",
+        layout: { visibility: "none" }, // masquée à l'ouverture
+        paint: {
+          "raster-opacity": 0.7, // le fond se lit à travers
+          "raster-resampling": "nearest", // pixels nets : pas de couleurs inventées entre deux classes
+        },
+      }, "coeur"); // insérée sous le cœur
+
+      const altitudes = {
+        type: "raster-dem", // une altitude codée dans la couleur de chaque pixel
+        tiles: ["https://tiles.mapterhorn.com/{z}/{x}/{y}.webp"],
+        encoding: "terrarium", // la façon de décoder la couleur en mètres
+        tileSize: 512,
+        maxzoom: 17, // au-delà, le service n'a plus de tuiles
+        attribution: "Relief : <a href='https://mapterhorn.com/attribution' target='_blank'>© Mapterhorn</a>",
+      };
+      map.addSource("ombrage", altitudes); // une source pour l'ombrage...
+      map.addSource("terrain", altitudes); // ... et une pour la 3D, comme le conseille MapLibre
+      
+      map.addLayer({
+        id: "ombrage",
+        type: "hillshade", // l'ombrage, calculé dans le navigateur à partir des altitudes
+        source: "ombrage",
+        paint: { "hillshade-exaggeration": 0.4 }, // un ombrage discret
+      }, "coeur"); // insérée sous le cœur
+     
+
+      // Étape 14 : deux boutons en haut à gauche, le terrain en 3D et le globe
+      map.addControl(new maplibregl.TerrainControl({ source: "terrain", exaggeration: 1.5 }), "top-left");
+      map.addControl(new maplibregl.GlobeControl(), "top-left");
+
+      // Étape 7 : les cases et les boutons du panneau montrent ou masquent les couches
+      for (const caseACocher of document.querySelectorAll("#panneau input[type=checkbox]")) {
+        caseACocher.addEventListener("change", () => {
+          const visibilite = caseACocher.checked ? "visible" : "none";
+          map.setLayoutProperty(caseACocher.value, "visibility", visibilite); // value : la couche
+        });
+      }
+      for (const bouton of document.querySelectorAll("#panneau input[name=fond]")) {
+        bouton.addEventListener("change", () => { // reçu par le seul bouton choisi
+          const visibilite = bouton.value === "photos" ? "visible" : "none";
+          map.setLayoutProperty("photos", "visibility", visibilite);
+        });
+      }
+
+      // Étape 8 : la liste filtre les refuges selon leur type
+      document.getElementById("filtre-refuges").addEventListener("change", (e) => {
+        const type = e.target.value; // la valeur de l'option choisie
+        if (type === "tous") {
+          map.setFilter("refuges", null); // aucun filtre : tous les refuges
+        } else {
+          map.setFilter("refuges", ["==", ["get", "type"], type]); // les refuges de ce type
+        }
+      });
+
+      // Étape 12 : le curseur règle l'opacité de l'occupation du sol
+      document.getElementById("opacite-oso").addEventListener("input", (e) => {
+        const opacite = e.target.value / 100; // le curseur va de 0 à 100, l'opacité de 0 à 1
+        map.setPaintProperty("oso", "raster-opacity", opacite);
+      });
+    });
+  </script>
+</body>
+</html>
